@@ -229,9 +229,9 @@ function makeStringTexture() {
   canvas.width = 32;
   canvas.height = 32;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#b3261e'; // red twine, a shade darker than the red bead so they stay distinct
+  ctx.fillStyle = '#ddd5c4';
   ctx.fillRect(0, 0, 32, 32);
-  for (const stripe of [{ color: '#6e120e', width: 8, shift: 0 }, { color: '#e06158', width: 4, shift: 16 }]) {
+  for (const stripe of [{ color: '#a1977f', width: 8, shift: 0 }, { color: '#f2ecdd', width: 4, shift: 16 }]) {
     ctx.strokeStyle = stripe.color;
     ctx.lineWidth = stripe.width;
     for (const off of [-32, 0, 32]) { // slope -1, period 32: wraps seamlessly in both axes
@@ -295,7 +295,7 @@ async function runSession() {
     { name: 'yellow', color: 0xf5c518, z: 0.45 },
     { name: 'green', color: 0x2fa84f, z: stringLength - 0.05 },
   ];
-  const beadGeometry = makeBeadGeometry(0.011, 0.004); // 22mm bead, 8mm hole (5mm cord + clearance)
+  const beadGeometry = makeBeadGeometry(0.011, 0.003); // 22mm bead, 6mm hole
   const beads = beadDefs.map(def => {
     const bead = new THREE.Mesh(
       beadGeometry,
@@ -305,12 +305,12 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: a 5mm twine cylinder threading the bead holes (8mm bore), twist pitch ~11mm.
+  // The cord: a 4mm twine cylinder threading the bead holes (6mm bore), twist pitch ~9mm.
   const stringTexture = makeStringTexture();
   stringTexture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // viewed nearly edge-on
-  stringTexture.repeat.set(2, Math.round(stringLength / 0.011));
+  stringTexture.repeat.set(2, Math.round(stringLength / 0.009));
   const cord = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.0025, 0.0025, stringLength, 10, 1, true),
+    new THREE.CylinderGeometry(0.002, 0.002, stringLength, 10, 1, true),
     new THREE.MeshStandardMaterial({ map: stringTexture, roughness: 0.85 }));
   cord.geometry.rotateX(Math.PI / 2); // cylinder height axis Y -> Z, along the string
   cord.position.z = -stringLength / 2;
