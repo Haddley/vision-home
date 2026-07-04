@@ -294,19 +294,19 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: a solid 4mm core with two strands riding on it as surface relief - 5mm overall,
-  // ~12mm pitch, threading the beads' 6mm bore snugly. The core is what prevents daylight:
-  // strands alone (even interpenetrating ones) leave a scalloped silhouette whose shaded
-  // waists read as gaps against the dark background.
+  // The cord: a solid 3.8mm core with two strands riding on it as surface relief - 5mm overall,
+  // threading the beads' 6mm bore snugly. The core prevents any true see-through; the 7mm pitch
+  // makes successive strand wraps (every 3.5mm) wider than their spacing, so they touch and no
+  // bare core shows between them - exposed shaded core was what kept reading as gaps.
   const cordMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.55 });
   const core = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.002, 0.002, stringLength, 12, 1, true), cordMaterial);
+    new THREE.CylinderGeometry(0.0019, 0.0019, stringLength, 12, 1, true), cordMaterial);
   core.geometry.rotateX(Math.PI / 2); // height axis Y -> Z, along the string
   core.position.z = -stringLength / 2;
   stringGroup.add(core);
   for (let strand = 0; strand < 2; strand++) {
     stringGroup.add(new THREE.Mesh(
-      makeStrandGeometry(stringLength, 0.0014, 0.0011, 0.012, strand, 2), cordMaterial));
+      makeStrandGeometry(stringLength, 0.0015, 0.001, 0.007, strand, 2), cordMaterial));
   }
 
   // Small magenta dot above the string while prism simulation is active - unmissable ground
