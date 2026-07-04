@@ -229,9 +229,9 @@ function makeStringTexture() {
   canvas.width = 32;
   canvas.height = 32;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#2456b3'; // blue twine - distinct from all three bead colors
+  ctx.fillStyle = '#f0eee8'; // white twine; stripes just dark enough that the twist still reads
   ctx.fillRect(0, 0, 32, 32);
-  for (const stripe of [{ color: '#122f6e', width: 8, shift: 0 }, { color: '#5b86e0', width: 4, shift: 16 }]) {
+  for (const stripe of [{ color: '#c6c1b4', width: 8, shift: 0 }, { color: '#ffffff', width: 4, shift: 16 }]) {
     ctx.strokeStyle = stripe.color;
     ctx.lineWidth = stripe.width;
     for (const off of [-32, 0, 32]) { // slope -1, period 32: wraps seamlessly in both axes
@@ -295,7 +295,7 @@ async function runSession() {
     { name: 'yellow', color: 0xf5c518, z: 0.45 },
     { name: 'green', color: 0x2fa84f, z: stringLength - 0.05 },
   ];
-  const beadGeometry = makeBeadGeometry(0.011, 0.004); // 22mm bead, 8mm hole (5mm cord + clearance)
+  const beadGeometry = makeBeadGeometry(0.011, 0.003); // 22mm bead, 6mm hole (snug fit on the 5mm cord)
   const beads = beadDefs.map(def => {
     const bead = new THREE.Mesh(
       beadGeometry,
@@ -305,7 +305,7 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: a 5mm twine cylinder threading the bead holes (8mm bore), twist pitch ~11mm.
+  // The cord: a 5mm twine cylinder threading the bead holes (6mm bore, snug), twist pitch ~11mm.
   const stringTexture = makeStringTexture();
   stringTexture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // viewed nearly edge-on
   stringTexture.repeat.set(2, Math.round(stringLength / 0.011));
