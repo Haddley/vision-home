@@ -82,16 +82,32 @@ for (const id of settingsFields) {
 }
 loadSettings();
 
-// ---------- speech (browser TTS - fully offline on Quest browser) --------------------------
+// ---------- speech: pre-generated audio clips, NOT speechSynthesis ---------------------------
+// Meta's Quest Browser doesn't implement speech synthesis (utterances neither speak nor fire
+// onend), which on-device made the first session silently stall at its first prompt. Clips are
+// generated offline with macOS `say` (same pipeline as the native app) and shipped with the app;
+// playback is stall-proof: whatever goes wrong, the promise resolves after the clip's duration
+// plus a small grace (or 8s if even metadata never loads).
 
-function speak(text) {
+const speechClips = {};
+for (const id of ['welcome', 'cnp_intro', 'press_when_one', 'next_exercise', 'jumps_intro',
+                  'last_exercise', 'sustained_intro', 'all_done']) {
+  speechClips[id] = new Audio(`./audio/${id}.m4a`);
+  speechClips[id].preload = 'auto';
+}
+
+function speak(clipId) {
   return new Promise(resolve => {
-    if (!('speechSynthesis' in window)) { resolve(); return; }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.95;
-    utterance.onend = resolve;
-    utterance.onerror = resolve;
-    speechSynthesis.speak(utterance);
+    const clip = speechClips[clipId];
+    if (!clip) { resolve(); return; }
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    clip.onended = finish;
+    clip.onerror = finish;
+    const cap = Number.isFinite(clip.duration) && clip.duration > 0 ? (clip.duration + 1.5) * 1000 : 8000;
+    setTimeout(finish, cap);
+    clip.currentTime = 0;
+    clip.play().catch(finish);
   });
 }
 
@@ -177,6 +193,17 @@ async function runSession() {
     new THREE.LineBasicMaterial({ color: 0xffffff }));
   stringGroup.add(cord);
 
+  // Small magenta dot above the string while prism simulation is active - unmissable ground
+  // truth that the shift code path is running, learned from debugging a session where a stalled
+  // audio prompt made it impossible to tell whether prism was even on.
+  if (prism.enabled) {
+    const indicator = new THREE.Mesh(
+      new THREE.SphereGeometry(0.006, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff40ff }));
+    indicator.position.set(0, 0.12, -0.8);
+    camera.add(indicator);
+  }
+
   function showOnlyBead(index) {
     beads.forEach((bead, i) => { bead.visible = index === null || i === index; });
   }
@@ -190,9 +217,6 @@ async function runSession() {
   // XR system provided this frame. Sign conventions match the native PrismController exactly:
   // right eye base-down + base-out => image shifts up (+y) and toward the nose (-x); left eye
   // mirrored. Reapplied every frame because WebXR refreshes the matrices every frame.
-  // Signs FLIPPED relative to the native app's constants after on-device testing reported the
-  // first attempt felt backwards - the WebXR projection convention evidently lands the shift on
-  // the opposite side of the equation than the native shader's `uv = texcoord - shift` did.
   const shiftMatrix = new THREE.Matrix4();
   function applyPrism() {
     if (!prism.enabled) return;
@@ -202,8 +226,8 @@ async function runSession() {
       const isRight = i === 1;
       const m00 = eyeCamera.projectionMatrix.elements[0];
       const m11 = eyeCamera.projectionMatrix.elements[5];
-      const x = (prism.horizontalDiopters / 100) * m00 * (isRight ? 1 : -1);
-      const y = (prism.verticalDiopters / 100) * m11 * (isRight ? -1 : 1);
+      const x = (prism.horizontalDiopters / 100) * m00 * (isRight ? -1 : 1);
+      const y = (prism.verticalDiopters / 100) * m11 * (isRight ? 1 : -1);
       shiftMatrix.makeTranslation(x, y, 0);
       eyeCamera.projectionMatrix.premultiply(shiftMatrix);
       eyeCamera.projectionMatrixInverse.copy(eyeCamera.projectionMatrix).invert();
@@ -251,9 +275,9 @@ async function runSession() {
   // telling us something, never an error).
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  async function say(text) {
+  async function say(clipId) {
     state.speaking = true;
-    await speak(text);
+    await speak(clipId);
     state.speaking = false;
     state.selected = false; // presses made during speech don't count
   }
@@ -297,7 +321,7 @@ async function runSession() {
       setBeadZ(0, 0.20);
       await sleep(1500);
       if (cycle === 1) {
-        await say('Convergence exercise. Watch the red bead as it slowly moves toward your nose. Squeeze the trigger the very moment you see it become two.');
+        await say('cnp_intro');
       }
       const inward = await moveBeadUntilSelect(0, -0.015, 0.04, 0.20);
       if (inward.confirmed) {
@@ -306,7 +330,7 @@ async function runSession() {
       } else {
         result.measurements.push(`cycle ${cycle}: reached 4cm without reported doubling`);
       }
-      await say('Now squeeze the trigger the moment it becomes one single bead again.');
+      await say('press_when_one');
       const outward = await moveBeadUntilSelect(0, 0.015, 0.04, 0.25);
       if (outward.confirmed) {
         recoveries.push(outward.z);
@@ -326,7 +350,7 @@ async function runSession() {
   async function divergenceJumps() {
     const result = { activityId: 'divergence_jumps', summary: '', measurements: [] };
     showOnlyBead(0);
-    await say('Jump exercise. The bead will jump between near and far. After each jump, squeeze the trigger as soon as you see one single bead.');
+    await say('jumps_intro');
     const nearZ = 0.25;
     const farZ = Math.min(1.2, stringLength - 0.1);
     const endAt = performance.now() + 60000;
@@ -352,7 +376,7 @@ async function runSession() {
     const result = { activityId: 'sustained_vergence', summary: '', measurements: [] };
     showOnlyBead(0);
     setBeadZ(0, 0.14);
-    await say('Endurance exercise. Keep the red bead single for one minute. Squeeze the trigger any time it splits into two.');
+    await say('sustained_intro');
     const endAt = performance.now() + 60000;
     let breaks = 0;
     while (performance.now() < endAt) {
@@ -370,14 +394,14 @@ async function runSession() {
 
   // --- run the routine, save, end.
   try {
-    await say(`Welcome ${patientName}. Hold your head comfortably still, and keep both eyes on the beads. Remember: squeeze the trigger, or pinch, the moment you see what I describe.`);
+    await say('welcome');
     await convergenceNearPoint();
-    await say('Well done. Next exercise.');
+    await say('next_exercise');
     await divergenceJumps();
-    await say('Well done. Last exercise.');
+    await say('last_exercise');
     await sustainedVergence();
     showOnlyBead(null);
-    await say('All done for today. Great work. Your session has been saved.');
+    await say('all_done');
   } catch (e) {
     logEvent(`session ended early: ${e.message}`);
   } finally {
