@@ -31,8 +31,12 @@ Static site, **no build step, no framework, no dependencies to install**:
   speak nor fire `onend`, which silently stalled an entire on-device session at its first prompt.
   Voice = pre-generated clips: `say -o /tmp/x.aiff "phrase"` then
   `afconvert -f m4af -d aac -b 64000 /tmp/x.aiff audio/x.m4a`, register the id in `speechClips`
-  in `main.js`. Playback must stay stall-proof (the `speak()` promise resolves on a duration cap
-  even if the clip never plays).
+  in `main.js`. Clips must play through the shared `AudioContext` (Web Audio), never
+  `HTMLAudioElement` — element `.play()` is gesture-gated per call and silently skipped clips
+  mid-session in the immersive session (e.g. `jumps_intro` never played); the context is
+  unlocked once inside the Start click. Playback must stay stall-proof (the `speak()` promise
+  resolves on a duration cap even if the clip never plays), and every playback failure must be
+  logged into the session record's events — silence is otherwise undebuggable on-device.
 - **The patient's only control is the WebXR `select` event** (trigger / hand pinch / Vision Pro
   look-and-pinch). Never add other input; that one rule is what makes the app work unmodified on
   Vision Pro. Selects during speech are deliberately ignored (don't race the prompt).

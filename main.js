@@ -85,29 +85,52 @@ loadSettings();
 // ---------- speech: pre-generated audio clips, NOT speechSynthesis ---------------------------
 // Meta's Quest Browser doesn't implement speech synthesis (utterances neither speak nor fire
 // onend), which on-device made the first session silently stall at its first prompt. Clips are
-// generated offline with macOS `say` (same pipeline as the native app) and shipped with the app;
-// playback is stall-proof: whatever goes wrong, the promise resolves after the clip's duration
-// plus a small grace (or 8s if even metadata never loads).
+// generated offline with macOS `say` (same pipeline as the native app) and shipped with the app.
+//
+// Clips play through one shared AudioContext (Web Audio), never HTMLAudioElement: element
+// .play() is gesture-gated per call by autoplay policy and silently skipped clips mid-session
+// inside the immersive XR session, whereas a context unlocked once by the Start click can
+// schedule buffers for the whole session. Playback stays stall-proof - whatever goes wrong,
+// the speak() promise resolves after the clip's duration plus a small grace (or 12s if the
+// clip never decoded) - and every failure is reported via onIssue so it lands in the session
+// record instead of vanishing.
 
-const speechClips = {};
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+const speechClips = {}; // id -> Promise<AudioBuffer|null>; null = load/decode failed (kept in the error message)
+const speechClipErrors = {};
 for (const id of ['welcome', 'cnp_intro', 'press_when_one', 'next_exercise', 'jumps_intro',
                   'last_exercise', 'sustained_intro', 'all_done']) {
-  speechClips[id] = new Audio(`./audio/${id}.m4a`);
-  speechClips[id].preload = 'auto';
+  speechClips[id] = fetch(`./audio/${id}.m4a`)
+    .then(response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.arrayBuffer();
+    })
+    .then(data => audioContext.decodeAudioData(data))
+    .catch(e => { speechClipErrors[id] = e.message || String(e); return null; });
 }
 
-function speak(clipId) {
+function speak(clipId, onIssue = () => {}) {
   return new Promise(resolve => {
-    const clip = speechClips[clipId];
-    if (!clip) { resolve(); return; }
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
-    clip.onended = finish;
-    clip.onerror = finish;
-    const cap = Number.isFinite(clip.duration) && clip.duration > 0 ? (clip.duration + 1.5) * 1000 : 8000;
-    setTimeout(finish, cap);
-    clip.currentTime = 0;
-    clip.play().catch(finish);
+    setTimeout(finish, 12000); // absolute backstop; no clip is anywhere near this long
+    const clipPromise = speechClips[clipId];
+    if (!clipPromise) { onIssue('unknown clip id'); finish(); return; }
+    if (audioContext.state !== 'running') {
+      onIssue(`audio context was ${audioContext.state}, resuming`);
+      audioContext.resume().catch(() => {});
+    }
+    clipPromise.then(buffer => {
+      if (done) return;
+      if (!buffer) { onIssue(`clip failed to load: ${speechClipErrors[clipId]}`); finish(); return; }
+      setTimeout(finish, (buffer.duration + 1.5) * 1000);
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioContext.destination);
+      source.onended = finish;
+      source.start();
+    }).catch(e => { onIssue(e.message || String(e)); finish(); });
   });
 }
 
@@ -143,6 +166,10 @@ function onSelect() {
 }
 
 async function runSession() {
+  // Unlock audio while still inside the click gesture (before any await) - autoplay policy
+  // ties AudioContext.resume() to user activation on Quest Browser and Vision Pro Safari.
+  audioContext.resume().catch(() => {});
+
   const patientName = document.getElementById('patientName').value.trim() || 'patient';
   const stringLength = parseFloat(document.getElementById('stringLength').value);
   const prism = {
@@ -277,7 +304,7 @@ async function runSession() {
 
   async function say(clipId) {
     state.speaking = true;
-    await speak(clipId);
+    await speak(clipId, issue => logEvent(`speech ${clipId}: ${issue}`));
     state.speaking = false;
     state.selected = false; // presses made during speech don't count
   }
