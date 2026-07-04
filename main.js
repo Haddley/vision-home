@@ -97,6 +97,22 @@ loadSettings();
 
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
+// Quest Browser suspends the page's AudioContext when the immersive session engages (observed
+// on-device as the welcome clip freezing mid-sentence and its tail unfreezing much later).
+// Re-resume immediately on every suspension; resume() is allowed without a fresh gesture once
+// the page has sticky activation from the Start click.
+audioContext.addEventListener('statechange', () => {
+  if (audioContext.state !== 'running') audioContext.resume().catch(() => {});
+});
+
+let currentSpeechSource = null;
+function stopCurrentSpeech() {
+  if (currentSpeechSource) {
+    try { currentSpeechSource.stop(); } catch { /* already ended */ }
+    currentSpeechSource = null;
+  }
+}
+
 const speechClips = {}; // id -> Promise<AudioBuffer|null>; null = load/decode failed (kept in the error message)
 const speechClipErrors = {};
 for (const id of ['welcome', 'cnp_intro', 'press_when_one', 'next_exercise', 'jumps_intro',
@@ -114,21 +130,26 @@ function speak(clipId, onIssue = () => {}) {
   return new Promise(resolve => {
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
-    setTimeout(finish, 12000); // absolute backstop; no clip is anywhere near this long
+    setTimeout(finish, 15000); // absolute backstop; no clip is anywhere near this long
     const clipPromise = speechClips[clipId];
     if (!clipPromise) { onIssue('unknown clip id'); finish(); return; }
-    if (audioContext.state !== 'running') {
-      onIssue(`audio context was ${audioContext.state}, resuming`);
-      audioContext.resume().catch(() => {});
-    }
-    clipPromise.then(buffer => {
+    // Don't start a clip into a suspended context - it would sit frozen and unfreeze at some
+    // arbitrary later moment. Wait (bounded) for the context to actually be running.
+    const ensureRunning = audioContext.state === 'running'
+      ? Promise.resolve()
+      : (onIssue(`audio context was ${audioContext.state}, resuming`),
+         Promise.race([audioContext.resume(), new Promise(r => setTimeout(r, 3000))]));
+    Promise.all([clipPromise, ensureRunning]).then(([buffer]) => {
       if (done) return;
       if (!buffer) { onIssue(`clip failed to load: ${speechClipErrors[clipId]}`); finish(); return; }
+      if (audioContext.state !== 'running') onIssue(`audio context still ${audioContext.state}; clip likely silent`);
       setTimeout(finish, (buffer.duration + 1.5) * 1000);
+      stopCurrentSpeech(); // a lingering earlier clip must never overlap this one
       const source = audioContext.createBufferSource();
       source.buffer = buffer;
       source.connect(audioContext.destination);
-      source.onended = finish;
+      source.onended = () => { if (currentSpeechSource === source) currentSpeechSource = null; finish(); };
+      currentSpeechSource = source;
       source.start();
     }).catch(e => { onIssue(e.message || String(e)); finish(); });
   });
@@ -160,6 +181,8 @@ const state = {
 };
 
 function onSelect() {
+  // A select is a user gesture - use each one to keep the audio context unlocked.
+  if (audioContext.state !== 'running') audioContext.resume().catch(() => {});
   if (!state.speaking) {
     state.selected = true;
   }
@@ -421,6 +444,11 @@ async function runSession() {
 
   // --- run the routine, save, end.
   try {
+    // Entering the immersive session can suspend the audio context and briefly steal audio
+    // routing; give it a moment to settle (and get the context back) before the first prompt.
+    audioContext.resume().catch(() => {});
+    await sleep(1500);
+    logEvent(`audio context at routine start: ${audioContext.state}`);
     await say('welcome');
     await convergenceNearPoint();
     await say('next_exercise');
