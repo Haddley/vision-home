@@ -11,7 +11,8 @@ runs a voice-guided daily vergence routine. Live at **https://haddley.github.io/
 
 This app deliberately contains only the *confirm-only, no-eye-tracking* subset of the clinical
 design — WebXR exposes no gaze data on any platform. The native app is the full clinical product;
-its `ACTIVITIES.md` documents the shared protocols, record schema, and interaction rules. Keep
+its `ACTIVITIES.md` documents the shared protocols, record schema, and interaction rules, and
+this repo's `ACTIVITIES.md` documents which activities are carried here and how they differ. Keep
 the two apps' JSON record shapes compatible — the professional reads both.
 
 ## Architecture
@@ -71,11 +72,13 @@ Static site, **no build step, no framework, no dependencies to install**:
 
 ## Adding an activity (the common feature request)
 
-1. Write an async function in `main.js` following the existing three (CNP, divergence jumps,
-   sustained vergence): move/show beads via the helpers, `await say('clip_id')`, gather responses
-   with `waitForSelect(timeoutMs)` / `moveBeadUntilSelect(...)`, push an
+1. Write an async function in `main.js` following the existing ones: move/show beads via the
+   helpers, `await say('clip_id')`, gather responses with `waitForSelect(timeoutMs)` /
+   `moveBeadUntilSelect(...)` / `rampUntilSelect(...)`, push an
    `{ activityId, summary, measurements }` result and a `logEvent`.
-2. Generate its intro clip into `audio/` and register the id in `speechClips`.
-3. Add it to the routine sequence in `runSession`.
+2. Add its intro text to `audio/generate.sh` (`_trigger` + `_pinch` variants), run it, and
+   register the ids in `speechClips`.
+3. Add it to `activityRegistry` in `runSession`, a checkbox row to `index.html`'s
+   `#activityChecklist`, and the checkbox id to `settingsFields`.
 4. Only port activities that need no eye tracking — the native app's registry marks gaze-based
-   ones with `usesEyeTracking: true`; those cannot work here.
+   ones with `usesEyeTracking: true`; those cannot work here. Update `ACTIVITIES.md`'s catalog.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Vision Home v0.7 — Brock String Training</title>
+  <title>Vision Home v0.8 — Brock String Training</title>
   <style>
     :root { color-scheme: dark; }
     body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #101216; color: #eee; }
@@ -18,12 +18,14 @@
     table { width: 100%; border-collapse: collapse; font-size: .9rem; }
     td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #2a2f3a; }
     .muted { color: #99a; font-size: .85rem; }
+    #activityChecklist label { display: flex; align-items: center; gap: 8px; margin: 7px 0; color: #eee; font-size: .95rem; }
+    #activityChecklist input { width: auto; }
     #unsupported { color: #f6a; display: none; }
   </style>
 </head>
 <body>
   <main>
-    <h1>Vision Home <span class="muted">v0.7</span> — Brock String Training</h1>
+    <h1>Vision Home <span class="muted">v0.8</span> — Brock String Training</h1>
     <p class="muted">Daily home practice between visits. Put on your headset, press the button
       below, and follow the spoken instructions. Your only control: <b>squeeze the trigger (or
       pinch)</b> the moment you see what the voice describes.</p>
@@ -44,15 +46,30 @@
       <div id="prismFields" style="display:flex; gap:12px">
         <div style="flex:1">
           <label for="prismVertical">Vertical (Δ, OD base down / OS base up)</label>
-          <input id="prismVertical" type="number" step="0.25" min="0" max="20" value="5.50" />
+          <input id="prismVertical" type="number" step="0.25" min="0" max="20" value="2.50" />
         </div>
         <div style="flex:1">
           <label for="prismHorizontal">Horizontal (Δ, base out)</label>
-          <input id="prismHorizontal" type="number" step="0.25" min="0" max="20" value="1.00" />
+          <input id="prismHorizontal" type="number" step="0.25" min="0" max="20" value="0.50" />
         </div>
       </div>
       <p class="muted">Only change these values on your professional's instruction. If you wear
         your prism glasses inside the headset, leave this off.</p>
+
+      <label style="margin-top:14px">Today's exercises</label>
+      <div id="activityChecklist">
+        <label><input type="checkbox" id="actCnp" checked /> Convergence near point</label>
+        <label><input type="checkbox" id="actDivergenceRange" /> Divergence range</label>
+        <label><input type="checkbox" id="actDivergenceJumps" checked /> Divergence jumps</label>
+        <label><input type="checkbox" id="actPrismStress" /> Prism stress test</label>
+        <label><input type="checkbox" id="actVerticalFusion" /> Vertical fusion challenge</label>
+        <label><input type="checkbox" id="actSustainedVergence" checked /> Sustained vergence</label>
+        <label><input type="checkbox" id="actBothEyes" /> Both-eyes check</label>
+        <label><input type="checkbox" id="actStereoAcuity" /> Stereo acuity</label>
+        <label><input type="checkbox" id="actContrastSensitivity" /> Contrast sensitivity</label>
+      </div>
+      <p class="muted">Tick what your professional prescribed; they run in the order shown. Your
+        selection is remembered for next time.</p>
       <p style="margin-top:16px">
         <button id="startBtn" class="primary">Start today's session (VR)</button>
       </p>

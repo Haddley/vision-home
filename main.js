@@ -55,7 +55,9 @@ renderRecordsTable();
 // here they never leave the device) ----------
 
 const SETTINGS_KEY = 'visionHomeSettings';
-const settingsFields = ['patientName', 'stringLength', 'prismEnabled', 'prismVertical', 'prismHorizontal'];
+const settingsFields = ['patientName', 'stringLength', 'prismEnabled', 'prismVertical', 'prismHorizontal',
+  'actCnp', 'actDivergenceRange', 'actDivergenceJumps', 'actPrismStress', 'actVerticalFusion',
+  'actSustainedVergence', 'actBothEyes', 'actStereoAcuity', 'actContrastSensitivity'];
 
 function loadSettings() {
   let saved = {};
@@ -120,7 +122,13 @@ const speechClipErrors = {};
 for (const id of ['welcome_trigger', 'welcome_pinch', 'cnp_intro_trigger', 'cnp_intro_pinch',
                   'press_when_one_trigger', 'press_when_one_pinch', 'jumps_intro_trigger',
                   'jumps_intro_pinch', 'sustained_intro_trigger', 'sustained_intro_pinch',
-                  'next_exercise', 'last_exercise', 'all_done']) {
+                  'divergence_range_intro_trigger', 'divergence_range_intro_pinch',
+                  'prism_stress_intro_trigger', 'prism_stress_intro_pinch',
+                  'vertical_fusion_intro_trigger', 'vertical_fusion_intro_pinch',
+                  'both_eyes_intro_trigger', 'both_eyes_intro_pinch',
+                  'stereo_intro_trigger', 'stereo_intro_pinch',
+                  'contrast_intro_trigger', 'contrast_intro_pinch',
+                  'other_direction', 'next_exercise', 'last_exercise', 'all_done']) {
   speechClips[id] = fetch(`./audio/${id}.m4a`)
     .then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -261,6 +269,14 @@ async function runSession() {
     horizontalDiopters: parseFloat(document.getElementById('prismHorizontal').value) || 0,
   };
 
+  // The exercises ticked on the landing page (mirrors the native app's activities checklist).
+  const selectedActivities = settingsFields.filter(id =>
+    id.startsWith('act') && document.getElementById(id).checked);
+  if (selectedActivities.length === 0) {
+    alert('Tick at least one exercise before starting.');
+    return;
+  }
+
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.xr.enabled = true;
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -316,16 +332,16 @@ async function runSession() {
   cord.position.z = -stringLength / 2;
   stringGroup.add(cord);
 
-  // Small magenta dot above the string while prism simulation is active - unmissable ground
-  // truth that the shift code path is running, learned from debugging a session where a stalled
-  // audio prompt made it impossible to tell whether prism was even on.
-  if (prism.enabled) {
-    const indicator = new THREE.Mesh(
-      new THREE.SphereGeometry(0.006, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff40ff }));
-    indicator.position.set(0, 0.12, -0.8);
-    camera.add(indicator);
-  }
+  // Small magenta dot above the string whenever any prism shift is active (prescription or an
+  // activity's ramp) - unmissable ground truth that the shift code path is running, learned
+  // from debugging a session where a stalled audio prompt made it impossible to tell whether
+  // prism was even on.
+  const prismIndicator = new THREE.Mesh(
+    new THREE.SphereGeometry(0.006, 12, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff40ff }));
+  prismIndicator.position.set(0, 0.12, -0.8);
+  prismIndicator.visible = false;
+  camera.add(prismIndicator);
 
   function showOnlyBead(index) {
     beads.forEach((bead, i) => { bead.visible = index === null || i === index; });
@@ -340,17 +356,23 @@ async function runSession() {
   // XR system provided this frame. Sign conventions match the native PrismController exactly:
   // right eye base-down + base-out => image shifts up (+y) and toward the nose (-x); left eye
   // mirrored. Reapplied every frame because WebXR refreshes the matrices every frame.
+  // Activities (prism stress, vertical fusion) drive their own shift on top of - or instead of -
+  // the prescription; the routine zeroes this between activities so a ramp never leaks onward.
+  const activityPrism = { horizontal: 0, vertical: 0 };
   const shiftMatrix = new THREE.Matrix4();
   function applyPrism() {
-    if (!prism.enabled) return;
+    const h = (prism.enabled ? prism.horizontalDiopters : 0) + activityPrism.horizontal;
+    const v = (prism.enabled ? prism.verticalDiopters : 0) + activityPrism.vertical;
+    prismIndicator.visible = h !== 0 || v !== 0;
+    if (!prismIndicator.visible) return;
     const xrCamera = renderer.xr.getCamera();
     if (!xrCamera.isArrayCamera || xrCamera.cameras.length !== 2) return;
     xrCamera.cameras.forEach((eyeCamera, i) => {
       const isRight = i === 1;
       const m00 = eyeCamera.projectionMatrix.elements[0];
       const m11 = eyeCamera.projectionMatrix.elements[5];
-      const x = (prism.horizontalDiopters / 100) * m00 * (isRight ? -1 : 1);
-      const y = (prism.verticalDiopters / 100) * m11 * (isRight ? 1 : -1);
+      const x = (h / 100) * m00 * (isRight ? -1 : 1);
+      const y = (v / 100) * m11 * (isRight ? 1 : -1);
       shiftMatrix.makeTranslation(x, y, 0);
       eyeCamera.projectionMatrix.premultiply(shiftMatrix);
       eyeCamera.projectionMatrixInverse.copy(eyeCamera.projectionMatrix).invert();
@@ -414,6 +436,28 @@ async function runSession() {
       const poll = () => {
         if (state.selected) { state.selected = false; resolve({ confirmed: true, ms: performance.now() - started }); }
         else if (performance.now() - started > timeoutMs) { resolve({ confirmed: false, ms: timeoutMs }); }
+        else { setTimeout(poll, 16); }
+      };
+      poll();
+    });
+  }
+
+  // Ramp a value toward a bound until the patient confirms or the bound is reached (reaching
+  // the bound unconfirmed is a finding, exactly like a bead reaching the end of its travel).
+  function rampUntilSelect(from, to, unitsPerSecond, apply) {
+    state.selected = false;
+    const dir = Math.sign(to - from) || 1;
+    let value = from;
+    let last = performance.now();
+    return new Promise(resolve => {
+      const poll = () => {
+        const now = performance.now();
+        value += dir * unitsPerSecond * (now - last) / 1000;
+        last = now;
+        if ((dir > 0 && value >= to) || (dir < 0 && value <= to)) value = to;
+        apply(value);
+        if (state.selected) { state.selected = false; resolve({ confirmed: true, value }); }
+        else if (value === to) { resolve({ confirmed: false, value }); }
         else { setTimeout(poll, 16); }
       };
       poll();
@@ -517,6 +561,258 @@ async function runSession() {
     logEvent(`sustained_vergence: ${result.summary}`);
   }
 
+  async function divergenceRange() {
+    const result = { activityId: 'divergence_range', summary: '', measurements: [] };
+    showOnlyBead(0);
+    const farZ = Math.min(1.40, stringLength - 0.05);
+    const breaks = [];
+    const recoveries = [];
+    for (let cycle = 1; cycle <= 3; cycle++) {
+      setBeadZ(0, 0.30);
+      await sleep(1500);
+      if (cycle === 1) {
+        await say('divergence_range_intro');
+      }
+      const outward = await moveBeadUntilSelect(0, 0.015, 0.30, farZ);
+      if (!outward.confirmed) {
+        // Fusion held all the way out - the finding native calls "no break to 140cm";
+        // nothing doubled, so there is no recovery leg this cycle.
+        result.measurements.push(`cycle ${cycle}: no break out to ${(farZ * 100).toFixed(0)}cm`);
+        continue;
+      }
+      breaks.push(outward.z);
+      result.measurements.push(`cycle ${cycle}: break at ${(outward.z * 100).toFixed(0)}cm`);
+      await say('press_when_one');
+      const inward = await moveBeadUntilSelect(0, -0.015, 0.20, farZ);
+      if (inward.confirmed) {
+        recoveries.push(inward.z);
+        result.measurements.push(`cycle ${cycle}: recovery at ${(inward.z * 100).toFixed(0)}cm`);
+      } else {
+        result.measurements.push(`cycle ${cycle}: no reported recovery by 20cm`);
+      }
+    }
+    const avg = list => list.reduce((a, b) => a + b, 0) / list.length;
+    result.summary = breaks.length > 0
+      ? `divergence range: break ${(avg(breaks) * 100).toFixed(0)}cm, recovery ${recoveries.length ? (avg(recoveries) * 100).toFixed(0) + 'cm' : 'n/a'} (of ${breaks.length} cycles)`
+      : `divergence range: no break out to ${(farZ * 100).toFixed(0)}cm`;
+    record.results.push(result);
+    logEvent(`divergence_range: ${result.summary}`);
+  }
+
+  async function prismStressTest() {
+    const result = { activityId: 'prism_stress', summary: '', measurements: [] };
+    showOnlyBead(1);
+    await say('prism_stress_intro');
+    const setH = value => { activityPrism.horizontal = value; };
+    const parts = [];
+    for (const dir of [{ name: 'base-out', sign: 1 }, { name: 'base-in', sign: -1 }]) {
+      if (dir.sign < 0) await say('other_direction');
+      const brk = await rampUntilSelect(0, dir.sign * 15, 0.5, setH); // 0.5 diopters/s, 15 cap
+      if (brk.confirmed) {
+        result.measurements.push(`${dir.name}: break at ${Math.abs(brk.value).toFixed(1)} diopters`);
+        const rec = await rampUntilSelect(brk.value, 0, 0.5, setH);
+        result.measurements.push(rec.confirmed
+          ? `${dir.name}: recovery at ${Math.abs(rec.value).toFixed(1)} diopters`
+          : `${dir.name}: no reported recovery down to 0 diopters`);
+        parts.push(`${dir.name} break ${Math.abs(brk.value).toFixed(1)}`);
+      } else {
+        result.measurements.push(`${dir.name}: no break up to 15 diopters`);
+        parts.push(`${dir.name} no break to 15`);
+      }
+      setH(0);
+      await sleep(2000);
+    }
+    result.summary = `prism stress: ${parts.join(', ')} (diopters)`;
+    record.results.push(result);
+    logEvent(`prism_stress: ${result.summary}`);
+  }
+
+  async function verticalFusionChallenge() {
+    const result = { activityId: 'vertical_fusion', summary: '', measurements: [] };
+    showOnlyBead(1);
+    await say('vertical_fusion_intro');
+    await sleep(1500);
+    const times = [];
+    for (let rep = 1; rep <= 3; rep++) {
+      activityPrism.vertical = 2.5 * (rep % 2 === 1 ? 1 : -1); // sudden opposite-base flip, alternating
+      const response = await waitForSelect(30000);
+      activityPrism.vertical = 0;
+      if (response.confirmed) {
+        times.push(response.ms);
+        result.measurements.push(`rep ${rep}: refused in ${(response.ms / 1000).toFixed(1)}s`);
+      } else {
+        result.measurements.push(`rep ${rep}: no refusion reported within 30s`);
+      }
+      await sleep(2000);
+    }
+    result.summary = times.length
+      ? `vertical fusion: ${times.length}/3 refused, avg ${(times.reduce((a, b) => a + b, 0) / times.length / 1000).toFixed(1)}s`
+      : 'vertical fusion: no refusion reported in 3 reps';
+    record.results.push(result);
+    logEvent(`vertical_fusion: ${result.summary}`);
+  }
+
+  async function bothEyesCheck() {
+    const result = { activityId: 'both_eyes', summary: '', measurements: [] };
+    showOnlyBead(-1);
+    // One bead per eye at the same spot on the string: three.js renders layer 1 to the left
+    // eye only and layer 2 to the right eye only. Suppression makes one of them vanish.
+    const eyePair = new THREE.Group();
+    for (const def of [{ color: 0xd93025, layer: 1 }, { color: 0x2fa84f, layer: 2 }]) {
+      const bead = new THREE.Mesh(
+        beadGeometry,
+        new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.35, side: THREE.DoubleSide }));
+      bead.layers.set(def.layer);
+      eyePair.add(bead);
+    }
+    eyePair.position.z = -0.45;
+    eyePair.visible = false;
+    stringGroup.add(eyePair);
+    await say('both_eyes_intro');
+    let seen = 0;
+    for (let trial = 1; trial <= 3; trial++) {
+      eyePair.visible = true;
+      const response = await waitForSelect(15000);
+      eyePair.visible = false;
+      if (response.confirmed) {
+        seen++;
+        result.measurements.push(`trial ${trial}: both seen in ${(response.ms / 1000).toFixed(1)}s`);
+      } else {
+        result.measurements.push(`trial ${trial}: not reported within 15s`);
+      }
+      await sleep(1500);
+    }
+    stringGroup.remove(eyePair);
+    result.summary = `both-eyes check: ${seen}/3 trials` +
+      (seen < 3 ? ' (repeated misses may suggest suppression)' : '');
+    record.results.push(result);
+    logEvent(`both_eyes: ${result.summary}`);
+  }
+
+  async function stereoAcuity() {
+    const result = { activityId: 'stereo_acuity', summary: '', measurements: [] };
+    showOnlyBead(-1);
+    // Runtime random-dot stereograms: identical dot fields per eye except a central square
+    // drawn with crossed disparity (left-eye copy shifted right, right-eye left), so the square
+    // floats in front for anyone with stereopsis and is invisible without it. Same honesty
+    // caveat as the native app: sub-pixel shifts make the 100-arcsec step coarse, not clinical.
+    const planeSize = 0.35, texSize = 1024, viewDistance = 0.8;
+    const metersPerPixel = planeSize / texSize;
+    function dotCanvas(dots, shiftPx) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = texSize;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#1c1c1c';
+      ctx.fillRect(0, 0, texSize, texSize);
+      ctx.fillStyle = '#cccccc';
+      for (const dot of dots) {
+        const inSquare = dot.x > texSize * 0.3 && dot.x < texSize * 0.7 &&
+                         dot.y > texSize * 0.3 && dot.y < texSize * 0.7;
+        ctx.beginPath();
+        ctx.arc(dot.x + (inSquare ? shiftPx : 0), dot.y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return canvas;
+    }
+    await say('stereo_intro');
+    let finest = null;
+    for (const arcsec of [400, 200, 100]) {
+      const dots = Array.from({ length: 1600 }, () => ({ x: Math.random() * texSize, y: Math.random() * texSize }));
+      const shiftPx = (viewDistance * arcsec * 4.848e-6) / metersPerPixel; // arcsec -> rad -> m on the plane -> px
+      const planes = [{ layer: 1, s: +shiftPx / 2 }, { layer: 2, s: -shiftPx / 2 }].map(({ layer, s }) => {
+        const texture = new THREE.CanvasTexture(dotCanvas(dots, s));
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(planeSize, planeSize),
+          new THREE.MeshBasicMaterial({ map: texture }));
+        plane.position.z = -viewDistance;
+        plane.layers.set(layer);
+        camera.add(plane);
+        return plane;
+      });
+      const response = await waitForSelect(15000);
+      planes.forEach(p => {
+        camera.remove(p);
+        p.material.map.dispose();
+        p.material.dispose();
+        p.geometry.dispose();
+      });
+      if (response.confirmed) {
+        finest = arcsec;
+        result.measurements.push(`${arcsec} arcsec: square seen in ${(response.ms / 1000).toFixed(1)}s`);
+      } else {
+        result.measurements.push(`${arcsec} arcsec: not reported within 15s`);
+        break; // the ladder only descends while the square is being seen
+      }
+      await sleep(1200);
+    }
+    result.summary = finest
+      ? `stereo acuity: finest disparity seen ${finest} arcsec`
+      : 'stereo acuity: square not reported at 400 arcsec';
+    record.results.push(result);
+    logEvent(`stereo_acuity: ${result.summary}`);
+  }
+
+  async function contrastSensitivity() {
+    const result = { activityId: 'contrast_sensitivity', summary: '', measurements: [] };
+    showOnlyBead(-1);
+    // Unlit gray-on-gray (MeshBasicMaterial ignores lights) for controlled luminance; the bead
+    // starts identical to the panel and its luminance ramps until the patient reports it.
+    const backLuminance = 0.25;
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.9, 0.9),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(backLuminance, backLuminance, backLuminance) }));
+    panel.position.z = -1.0;
+    camera.add(panel);
+    const target = new THREE.Mesh(
+      new THREE.SphereGeometry(0.012, 24, 16),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(backLuminance, backLuminance, backLuminance) }));
+    target.visible = false;
+    camera.add(target);
+    await say('contrast_intro');
+    const readings = [];
+    for (let trial = 1; trial <= 3; trial++) {
+      await sleep(1500 + Math.random() * 2000); // unpredictable onset
+      target.position.set((Math.random() - 0.5) * 0.24, (Math.random() - 0.5) * 0.14, -0.6);
+      target.material.color.setRGB(backLuminance, backLuminance, backLuminance);
+      target.visible = true;
+      const response = await rampUntilSelect(0, 0.6, 0.02, contrast => { // Weber contrast, 2%/s
+        const lum = backLuminance * (1 + contrast);
+        target.material.color.setRGB(lum, lum, lum);
+      });
+      target.visible = false;
+      if (response.confirmed) {
+        readings.push(response.value);
+        result.measurements.push(`trial ${trial}: detected at ${(response.value * 100).toFixed(0)}% contrast`);
+      } else {
+        result.measurements.push(`trial ${trial}: not detected up to 60% contrast`);
+      }
+    }
+    camera.remove(panel);
+    camera.remove(target);
+    panel.material.dispose(); panel.geometry.dispose();
+    target.material.dispose(); target.geometry.dispose();
+    result.summary = readings.length
+      ? `contrast sensitivity: detection at ${(Math.min(...readings) * 100).toFixed(0)}% Weber contrast (best of ${readings.length}/3)`
+      : 'contrast sensitivity: no detection up to 60% contrast';
+    record.results.push(result);
+    logEvent(`contrast_sensitivity: ${result.summary}`);
+  }
+
+  // --- the playlist: ticked activities auto-run in registry order, same as the native app.
+  const activityRegistry = [
+    { id: 'cnp', checkbox: 'actCnp', run: convergenceNearPoint },
+    { id: 'divergence_range', checkbox: 'actDivergenceRange', run: divergenceRange },
+    { id: 'divergence_jumps', checkbox: 'actDivergenceJumps', run: divergenceJumps },
+    { id: 'prism_stress', checkbox: 'actPrismStress', run: prismStressTest },
+    { id: 'vertical_fusion', checkbox: 'actVerticalFusion', run: verticalFusionChallenge },
+    { id: 'sustained_vergence', checkbox: 'actSustainedVergence', run: sustainedVergence },
+    { id: 'both_eyes', checkbox: 'actBothEyes', run: bothEyesCheck },
+    { id: 'stereo_acuity', checkbox: 'actStereoAcuity', run: stereoAcuity },
+    { id: 'contrast_sensitivity', checkbox: 'actContrastSensitivity', run: contrastSensitivity },
+  ];
+  const playlist = activityRegistry.filter(a => selectedActivities.includes(a.checkbox));
+
   // --- run the routine, save, end.
   try {
     // Entering the immersive session can suspend the audio context and briefly steal audio
@@ -524,12 +820,14 @@ async function runSession() {
     audioContext.resume().catch(() => {});
     await sleep(1500);
     logEvent(`audio context at routine start: ${audioContext.state}, input mode: ${inputMode}`);
+    logEvent(`playlist: ${playlist.map(a => a.id).join(', ')}`);
     await say('welcome');
-    await convergenceNearPoint();
-    await say('next_exercise');
-    await divergenceJumps();
-    await say('last_exercise');
-    await sustainedVergence();
+    for (let i = 0; i < playlist.length; i++) {
+      if (i > 0) await say(i === playlist.length - 1 ? 'last_exercise' : 'next_exercise');
+      await playlist[i].run();
+      activityPrism.horizontal = 0; // an interrupted ramp must never leak into the next activity
+      activityPrism.vertical = 0;
+    }
     showOnlyBead(null);
     await say('all_done');
   } catch (e) {
