@@ -66,6 +66,18 @@ Static site, **no build step, no framework, no dependencies to install**:
   `adb reverse tcp:8000 tcp:8000`, open `http://localhost:8000` in the Quest browser (localhost
   is a secure context, so WebXR works). There is no remote console: debugging is by observable
   behavior + the session record, so prefer changes whose success is visible in-headset.
+- **Look at visual changes before pushing them**: `_stringtest.html` renders the Brock string
+  from four viewpoints (including the patient's own) with the scene's exact geometry code,
+  parameterized via query string. Serve the repo, then screenshot headlessly:
+  `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new
+  --use-angle=swiftshader --enable-unsafe-swiftshader --window-size=1200,800
+  --virtual-time-budget=6000 --screenshot=out.png "http://localhost:8123/_stringtest.html?..."`.
+  Six blind push-and-ask iterations on the string's look happened before this harness; don't
+  repeat that. Keep the harness's copied geometry in sync with `main.js` when tuning.
+- **The settled string recipe** (v0.12, judged from renders + on-device): 2.4mm two-ply twine —
+  strand radius 0.7mm on a 0.5mm twist radius, 4mm pitch (wraps touch), 0.6mm straight core as
+  see-through insurance, ±0.5mm slow wobble, through a 4mm bead bore. Scale is the key: a 5mm
+  cord reads as a straw no matter the surface.
 - `node --check main.js` for a quick syntax gate before pushing.
 - Records: sessions append to `localStorage.visionHomeRecords`; shape mirrors the native app's
   `SessionRecord`/`ActivityResult` (see that repo's `ACTIVITIES.md`).

@@ -235,16 +235,19 @@ function makeBeadGeometry(radius, holeRadius) {
 // One strand of a twisted rope: a thin tube swept along a helix running down -Z (the string
 // axis). The twist is geometry, not texture - a striped texture on a thin cylinder mip-blends
 // to muddy grey at the grazing angle a Brock string is viewed from and reads as a straw;
-// real strands keep their silhouette and shading at any angle.
-function makeStrandGeometry(length, strandRadius, twistRadius, pitch, strandIndex, strandCount) {
+// real strands keep their silhouette and shading at any angle. The gentle per-strand wobble
+// breaks the perfect straightness that also read as artificial. Recipe settled by looking at
+// headless-Chrome renders (_stringtest.html) - re-render before changing it.
+function makeStrandGeometry(length, strandRadius, twistRadius, pitch, strandIndex, strandCount, wobble) {
   const turns = length / pitch;
   const phase = (strandIndex / strandCount) * 2 * Math.PI;
   const helix = new THREE.Curve();
   helix.getPoint = (t, target = new THREE.Vector3()) => {
     const angle = 2 * Math.PI * turns * t + phase;
-    return target.set(Math.cos(angle) * twistRadius, Math.sin(angle) * twistRadius, -length * t);
+    const wob = wobble * Math.sin(t * 40 + strandIndex);
+    return target.set(Math.cos(angle) * twistRadius + wob, Math.sin(angle) * twistRadius, -length * t);
   };
-  return new THREE.TubeGeometry(helix, Math.ceil(turns * 16), strandRadius, 8, false);
+  return new THREE.TubeGeometry(helix, Math.ceil(turns * 12), strandRadius, 6, false);
 }
 
 async function runSession() {
@@ -302,7 +305,7 @@ async function runSession() {
     { name: 'yellow', color: 0xf5c518, z: 0.45 },
     { name: 'green', color: 0x2fa84f, z: stringLength - 0.05 },
   ];
-  const beadGeometry = makeBeadGeometry(0.011, 0.003); // 22mm bead, 6mm hole (snug fit on the 5mm cord)
+  const beadGeometry = makeBeadGeometry(0.011, 0.002); // 22mm bead, 4mm hole (snug on the 2.4mm cord)
   const beads = beadDefs.map(def => {
     const bead = new THREE.Mesh(
       beadGeometry,
@@ -312,19 +315,19 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: a solid 3.8mm core with two strands riding on it as surface relief - 5mm overall,
-  // threading the beads' 6mm bore snugly. The core prevents any true see-through; the 7mm pitch
-  // makes successive strand wraps (every 3.5mm) wider than their spacing, so they touch and no
-  // bare core shows between them - exposed shaded core was what read as gaps in earlier tries.
+  // The cord: 2.4mm two-ply white twine - real Brock-string scale, which matters as much as
+  // the twist (the earlier 5mm cord read as a straw/rod regardless of surface treatment).
+  // Two 1.4mm strands at 4mm pitch (wraps touch - no see-through) over a thin straight core
+  // as insurance, with ~0.5mm of slow waviness so it isn't unnaturally rigid.
   const cordMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.55 });
   const core = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.0019, 0.0019, stringLength, 12, 1, true), cordMaterial);
+    new THREE.CylinderGeometry(0.0006, 0.0006, stringLength, 8, 1, true), cordMaterial);
   core.geometry.rotateX(Math.PI / 2); // height axis Y -> Z, along the string
   core.position.z = -stringLength / 2;
   stringGroup.add(core);
   for (let strand = 0; strand < 2; strand++) {
     stringGroup.add(new THREE.Mesh(
-      makeStrandGeometry(stringLength, 0.0015, 0.001, 0.007, strand, 2), cordMaterial));
+      makeStrandGeometry(stringLength, 0.0007, 0.0005, 0.004, strand, 2, 0.0005), cordMaterial));
   }
 
   // Small magenta dot above the string whenever any prism shift is active (prescription or an

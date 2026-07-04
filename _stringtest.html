@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>body{margin:0;background:#000}</style></head>
+<body>
+<script type="module">
+import * as THREE from './lib/three.module.js';
+
+// Recipe from query params so iterations don't need file edits.
+const q = new URLSearchParams(location.search);
+const P = {
+  strandR:  parseFloat(q.get('strandR')  ?? '0.0015'),
+  twistR:   parseFloat(q.get('twistR')   ?? '0.001'),
+  pitch:    parseFloat(q.get('pitch')    ?? '0.007'),
+  coreR:    parseFloat(q.get('coreR')    ?? '0.0019'),
+  strands:  parseInt(q.get('strands')    ?? '2'),
+  color:    parseInt(q.get('color')      ?? 'f5f2ea', 16),
+  rough:    parseFloat(q.get('rough')    ?? '0.55'),
+  wobble:   parseFloat(q.get('wobble')   ?? '0'),   // random lateral waviness amplitude (m)
+  holeR:    parseFloat(q.get('holeR')    ?? '0.003'),
+};
+
+const stringLength = 1.5;
+
+function makeStrandGeometry(length, strandRadius, twistRadius, pitch, strandIndex, strandCount) {
+  const turns = length / pitch;
+  const phase = (strandIndex / strandCount) * 2 * Math.PI;
+  const helix = new THREE.Curve();
+  helix.getPoint = (t, target = new THREE.Vector3()) => {
+    const angle = 2 * Math.PI * turns * t + phase;
+    const wob = P.wobble * Math.sin(t * 40 + strandIndex);
+    return target.set(Math.cos(angle) * twistRadius + wob, Math.sin(angle) * twistRadius, -length * t);
+  };
+  return new THREE.TubeGeometry(helix, Math.ceil(turns * 16), strandRadius, 8, false);
+}
+
+function makeBeadGeometry(radius, holeRadius) {
+  const rimAngle = Math.asin(holeRadius / radius);
+  const rimY = Math.cos(rimAngle) * radius;
+  const points = [new THREE.Vector2(holeRadius, rimY), new THREE.Vector2(holeRadius, -rimY)];
+  for (let i = 0; i <= 24; i++) {
+    const phi = (Math.PI - rimAngle) - (i / 24) * (Math.PI - 2 * rimAngle);
+    points.push(new THREE.Vector2(Math.sin(phi) * radius, Math.cos(phi) * radius));
+  }
+  const g = new THREE.LatheGeometry(points, 32);
+  g.rotateX(Math.PI / 2);
+  return g;
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(1200, 800);
+renderer.setScissorTest(true);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d12);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+keyLight.position.set(0.5, 1, 0.6);
+scene.add(keyLight);
+
+const stringGroup = new THREE.Group();
+stringGroup.rotation.x = THREE.MathUtils.degToRad(-7.5);
+scene.add(stringGroup);
+
+const beadGeometry = makeBeadGeometry(0.011, P.holeR);
+for (const def of [{ color: 0xd93025, z: 0.20 }, { color: 0xf5c518, z: 0.45 }, { color: 0x2fa84f, z: stringLength - 0.05 }]) {
+  const bead = new THREE.Mesh(beadGeometry,
+    new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.35, side: THREE.DoubleSide }));
+  bead.position.z = -def.z;
+  stringGroup.add(bead);
+}
+
+const cordMaterial = new THREE.MeshStandardMaterial({ color: P.color, roughness: P.rough });
+if (P.coreR > 0) {
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(P.coreR, P.coreR, stringLength, 12, 1, true), cordMaterial);
+  core.geometry.rotateX(Math.PI / 2);
+  core.position.z = -stringLength / 2;
+  stringGroup.add(core);
+}
+for (let s = 0; s < P.strands; s++) {
+  stringGroup.add(new THREE.Mesh(
+    makeStrandGeometry(stringLength, P.strandR, P.twistR, P.pitch, s, P.strands), cordMaterial));
+}
+
+// Four views: patient view (from the nose), 20cm bead close-up, side view at 45cm, far view.
+const views = [
+  { x: 0, y: 400, w: 600, h: 400, pos: [0, 0.02, 0.02], look: [0, -0.05, -0.6], fov: 70 },   // patient
+  { x: 600, y: 400, w: 600, h: 400, pos: [0.05, 0.02, -0.13], look: [0, -0.027, -0.20], fov: 45 }, // red bead close
+  { x: 0, y: 0, w: 600, h: 400, pos: [0.09, 0.01, -0.45], look: [0, -0.06, -0.45], fov: 40 },  // side mid
+  { x: 600, y: 0, w: 600, h: 400, pos: [0.03, 0.05, 0.05], look: [0, -0.1, -0.9], fov: 55 },  // over-shoulder far
+];
+for (const v of views) {
+  const cam = new THREE.PerspectiveCamera(v.fov, v.w / v.h, 0.005, 50);
+  cam.position.set(...v.pos);
+  cam.lookAt(...v.look);
+  renderer.setViewport(v.x, v.y, v.w, v.h);
+  renderer.setScissor(v.x, v.y, v.w, v.h);
+  renderer.render(scene, cam);
+}
+document.title = 'rendered';
+</script>
+</body>
+</html>
