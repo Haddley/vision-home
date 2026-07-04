@@ -305,12 +305,12 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: a 2mm twine cylinder threading the bead holes, twist pitch ~5mm.
+  // The cord: a 3mm twine cylinder threading the bead holes (6mm bore), twist pitch ~7mm.
   const stringTexture = makeStringTexture();
   stringTexture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // viewed nearly edge-on
-  stringTexture.repeat.set(2, Math.round(stringLength / 0.005));
+  stringTexture.repeat.set(2, Math.round(stringLength / 0.007));
   const cord = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.001, 0.001, stringLength, 10, 1, true),
+    new THREE.CylinderGeometry(0.0015, 0.0015, stringLength, 10, 1, true),
     new THREE.MeshStandardMaterial({ map: stringTexture, roughness: 0.85 }));
   cord.geometry.rotateX(Math.PI / 2); // cylinder height axis Y -> Z, along the string
   cord.position.z = -stringLength / 2;
