@@ -36,6 +36,8 @@ CLIPS=(
   contrast_intro_trigger "Faint bead exercise. Look straight ahead at the grey panel. Squeeze the trigger the very moment a faint bead appears."
   contrast_intro_pinch   "Faint bead exercise. Look straight ahead at the grey panel. Pinch the very moment a faint bead appears."
   other_direction        "Now the other direction."
+  head_tilt_left         "Your head is tilting toward your left shoulder. Gently bring it level."
+  head_tilt_right        "Your head is tilting toward your right shoulder. Gently bring it level."
   next_exercise          "Well done. Next exercise."
   last_exercise          "Well done. Last exercise."
   all_done               "All done for today. Great work. Your session has been saved."

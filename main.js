@@ -56,6 +56,7 @@ renderRecordsTable();
 
 const SETTINGS_KEY = 'visionHomeSettings';
 const settingsFields = ['patientName', 'stringLength', 'prismEnabled', 'prismVertical', 'prismHorizontal',
+  'headTiltAlerts',
   'actCnp', 'actDivergenceRange', 'actDivergenceJumps', 'actPrismStress', 'actVerticalFusion',
   'actSustainedVergence', 'actBothEyes', 'actStereoAcuity', 'actContrastSensitivity'];
 
@@ -128,7 +129,8 @@ for (const id of ['welcome_trigger', 'welcome_pinch', 'cnp_intro_trigger', 'cnp_
                   'both_eyes_intro_trigger', 'both_eyes_intro_pinch',
                   'stereo_intro_trigger', 'stereo_intro_pinch',
                   'contrast_intro_trigger', 'contrast_intro_pinch',
-                  'other_direction', 'next_exercise', 'last_exercise', 'all_done']) {
+                  'other_direction', 'head_tilt_left', 'head_tilt_right',
+                  'next_exercise', 'last_exercise', 'all_done']) {
   speechClips[id] = fetch(`./audio/${id}.m4a`)
     .then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -379,6 +381,42 @@ async function runSession() {
     });
   }
 
+  // --- head-tilt biofeedback (ported from the native HeadTiltMonitor): a sustained head roll
+  // toward a shoulder is compensatory posture - a clinical sign the prism correction is wrong,
+  // or that one is needed. Same spec as native: >10° held 2.5s speaks a gentle nudge, 15s
+  // cooldown per direction (a habitual left tilt doesn't silence a right-tilt warning), never
+  // talks over a prompt, and every alert is logged with angle and direction so the professional
+  // can read tilt frequency from the record.
+  const headTilt = {
+    enabled: document.getElementById('headTiltAlerts').checked,
+    direction: null,
+    since: null,
+    cooldownUntil: { left: 0, right: 0 },
+  };
+  const headRight = new THREE.Vector3();
+  function monitorHeadTilt() {
+    if (!headTilt.enabled || !renderer.xr.isPresenting) return;
+    // Roll = how far the head's right axis dips out of the horizontal plane. Right ear down
+    // (rightward tilt) sends it below the horizon; left tilt lifts it above.
+    headRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    const tiltDeg = THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(headRight.y, -1, 1)));
+    if (Math.abs(tiltDeg) < 10) { headTilt.since = null; return; }
+    const direction = tiltDeg > 0 ? 'left' : 'right';
+    const now = performance.now();
+    if (headTilt.direction !== direction || headTilt.since === null) {
+      headTilt.direction = direction;
+      headTilt.since = now;
+      return;
+    }
+    if (now - headTilt.since < 2500) return;
+    if (now < headTilt.cooldownUntil[direction]) return;
+    if (state.speaking) return; // a posture nudge never talks over a prompt
+    headTilt.cooldownUntil[direction] = now + 15000;
+    headTilt.since = now; // the next alert needs a fresh sustained tilt
+    logEvent(`head tilt alert: ${Math.abs(tiltDeg).toFixed(0)} degrees toward ${direction} shoulder`);
+    speak(`head_tilt_${direction}`, issue => logEvent(`speech head_tilt_${direction}: ${issue}`));
+  }
+
   // --- render loop: advances any scripted bead motion, applies the prism shift.
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
@@ -388,6 +426,7 @@ async function runSession() {
       const z = THREE.MathUtils.clamp(beadZ(m.bead) + m.velocity * dt, m.minZ, m.maxZ);
       setBeadZ(m.bead, z);
     }
+    monitorHeadTilt();
     applyPrism();
     renderer.render(scene, camera);
   });

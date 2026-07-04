@@ -62,6 +62,19 @@ Differences from the native versions, all consequences of having no eye tracking
 - **Accommodation family, Find the Difference, Cognitive-Visual Integration** — not implemented
   natively either (see the native `ACTIVITIES.md` for the reasoning).
 
+## Continuous feedback
+
+**Head-tilt biofeedback** — ported from the native `HeadTiltMonitor` with the same spec: a
+sustained (2.5 s) head roll past 10° toward either shoulder triggers "Your head is tilting
+toward your left/right shoulder. Gently bring it level.", with a 15 s cooldown per direction
+(a habitual left tilt doesn't silence a right-tilt warning); it never talks over a prompt.
+Every alert is logged to the session record's events with angle and direction — compensatory
+tilt frequency is clinical signal that the prism correction is wrong or missing (prism
+tapering). Toggle on the landing page, default ON.
+
+(The native app's other continuous system, free-run gaze coaching, is gaze-driven and cannot
+exist here.)
+
 ## The activity checklist (landing page)
 
 Mirrors the native "activities checklist" step: one checkbox per activity, run in registry
