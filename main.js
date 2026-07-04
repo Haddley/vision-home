@@ -222,19 +222,30 @@ function makeBeadGeometry(radius, holeRadius) {
   return geometry;
 }
 
-// One strand of a twisted rope: a thin tube swept along a helix running down -Z (the string
-// axis). The twist is geometry, not texture - a striped texture on a thin cylinder mip-blends
-// to muddy grey at the grazing angle a Brock string is viewed from and stops reading as rope;
-// real strands keep their silhouette and shading at any angle.
-function makeStrandGeometry(length, strandRadius, twistRadius, pitch, strandIndex, strandCount) {
-  const turns = length / pitch;
-  const phase = (strandIndex / strandCount) * 2 * Math.PI;
-  const helix = new THREE.Curve();
-  helix.getPoint = (t, target = new THREE.Vector3()) => {
-    const angle = 2 * Math.PI * turns * t + phase;
-    return target.set(Math.cos(angle) * twistRadius, Math.sin(angle) * twistRadius, -length * t);
-  };
-  return new THREE.TubeGeometry(helix, Math.ceil(turns * 16), strandRadius, 8, false);
+// Twisted-twine texture for the cord: two seamless 45-degree stripe sets (shadow + highlight)
+// that tile into a helix when repeated along a thin cylinder.
+function makeStringTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f0eee8'; // white twine; stripes just dark enough that the twist still reads
+  ctx.fillRect(0, 0, 32, 32);
+  for (const stripe of [{ color: '#c6c1b4', width: 8, shift: 0 }, { color: '#ffffff', width: 4, shift: 16 }]) {
+    ctx.strokeStyle = stripe.color;
+    ctx.lineWidth = stripe.width;
+    for (const off of [-32, 0, 32]) { // slope -1, period 32: wraps seamlessly in both axes
+      ctx.beginPath();
+      ctx.moveTo(off + stripe.shift - 16, 48);
+      ctx.lineTo(off + stripe.shift + 48, -16);
+      ctx.stroke();
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
 async function runSession() {
@@ -294,20 +305,16 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: a solid 3.8mm core with two strands riding on it as surface relief - 5mm overall,
-  // threading the beads' 6mm bore snugly. The core prevents any true see-through; the 7mm pitch
-  // makes successive strand wraps (every 3.5mm) wider than their spacing, so they touch and no
-  // bare core shows between them - exposed shaded core was what kept reading as gaps.
-  const cordMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.55 });
-  const core = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.0019, 0.0019, stringLength, 12, 1, true), cordMaterial);
-  core.geometry.rotateX(Math.PI / 2); // height axis Y -> Z, along the string
-  core.position.z = -stringLength / 2;
-  stringGroup.add(core);
-  for (let strand = 0; strand < 2; strand++) {
-    stringGroup.add(new THREE.Mesh(
-      makeStrandGeometry(stringLength, 0.0015, 0.001, 0.007, strand, 2), cordMaterial));
-  }
+  // The cord: a 5mm twine cylinder threading the bead holes (6mm bore, snug), twist pitch ~11mm.
+  const stringTexture = makeStringTexture();
+  stringTexture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // viewed nearly edge-on
+  stringTexture.repeat.set(2, Math.round(stringLength / 0.011));
+  const cord = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.0025, 0.0025, stringLength, 10, 1, true),
+    new THREE.MeshStandardMaterial({ map: stringTexture, roughness: 0.85 }));
+  cord.geometry.rotateX(Math.PI / 2); // cylinder height axis Y -> Z, along the string
+  cord.position.z = -stringLength / 2;
+  stringGroup.add(cord);
 
   // Small magenta dot above the string while prism simulation is active - unmissable ground
   // truth that the shift code path is running, learned from debugging a session where a stalled
