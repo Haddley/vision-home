@@ -190,6 +190,9 @@ async function runSession() {
   // XR system provided this frame. Sign conventions match the native PrismController exactly:
   // right eye base-down + base-out => image shifts up (+y) and toward the nose (-x); left eye
   // mirrored. Reapplied every frame because WebXR refreshes the matrices every frame.
+  // Signs FLIPPED relative to the native app's constants after on-device testing reported the
+  // first attempt felt backwards - the WebXR projection convention evidently lands the shift on
+  // the opposite side of the equation than the native shader's `uv = texcoord - shift` did.
   const shiftMatrix = new THREE.Matrix4();
   function applyPrism() {
     if (!prism.enabled) return;
@@ -199,8 +202,8 @@ async function runSession() {
       const isRight = i === 1;
       const m00 = eyeCamera.projectionMatrix.elements[0];
       const m11 = eyeCamera.projectionMatrix.elements[5];
-      const x = (prism.horizontalDiopters / 100) * m00 * (isRight ? -1 : 1);
-      const y = (prism.verticalDiopters / 100) * m11 * (isRight ? 1 : -1);
+      const x = (prism.horizontalDiopters / 100) * m00 * (isRight ? 1 : -1);
+      const y = (prism.verticalDiopters / 100) * m11 * (isRight ? -1 : 1);
       shiftMatrix.makeTranslation(x, y, 0);
       eyeCamera.projectionMatrix.premultiply(shiftMatrix);
       eyeCamera.projectionMatrixInverse.copy(eyeCamera.projectionMatrix).invert();
