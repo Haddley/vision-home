@@ -113,10 +113,14 @@ function stopCurrentSpeech() {
   }
 }
 
+// Prompts that name the confirm action exist in _trigger/_pinch variants; speak() picks by
+// the session's live input mode. Neutral prompts have a single clip.
 const speechClips = {}; // id -> Promise<AudioBuffer|null>; null = load/decode failed (kept in the error message)
 const speechClipErrors = {};
-for (const id of ['welcome', 'cnp_intro', 'press_when_one', 'next_exercise', 'jumps_intro',
-                  'last_exercise', 'sustained_intro', 'all_done']) {
+for (const id of ['welcome_trigger', 'welcome_pinch', 'cnp_intro_trigger', 'cnp_intro_pinch',
+                  'press_when_one_trigger', 'press_when_one_pinch', 'jumps_intro_trigger',
+                  'jumps_intro_pinch', 'sustained_intro_trigger', 'sustained_intro_pinch',
+                  'next_exercise', 'last_exercise', 'all_done']) {
   speechClips[id] = fetch(`./audio/${id}.m4a`)
     .then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -126,12 +130,23 @@ for (const id of ['welcome', 'cnp_intro', 'press_when_one', 'next_exercise', 'ju
     .catch(e => { speechClipErrors[id] = e.message || String(e); return null; });
 }
 
+// 'trigger' when a controller is present, 'pinch' otherwise. Bare hands on Quest expose a
+// `hand` on their input source; Vision Pro's transient-pointer inputs only exist mid-pinch,
+// so an empty input list also means pinch. Updated live on inputsourceschange, so a Quest
+// user who sets the controllers down mid-session gets the right word too.
+let inputMode = 'pinch';
+function updateInputMode(session) {
+  const hasController = Array.from(session.inputSources).some(s => s.gamepad && !s.hand);
+  inputMode = hasController ? 'trigger' : 'pinch';
+}
+
 function speak(clipId, onIssue = () => {}) {
   return new Promise(resolve => {
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
     setTimeout(finish, 15000); // absolute backstop; no clip is anywhere near this long
-    const clipPromise = speechClips[clipId];
+    const variantId = speechClips[`${clipId}_${inputMode}`] ? `${clipId}_${inputMode}` : clipId;
+    const clipPromise = speechClips[variantId];
     if (!clipPromise) { onIssue('unknown clip id'); finish(); return; }
     // Don't start a clip into a suspended context - it would sit frozen and unfreeze at some
     // arbitrary later moment. Wait (bounded) for the context to actually be running.
@@ -141,7 +156,7 @@ function speak(clipId, onIssue = () => {}) {
          Promise.race([audioContext.resume(), new Promise(r => setTimeout(r, 3000))]));
     Promise.all([clipPromise, ensureRunning]).then(([buffer]) => {
       if (done) return;
-      if (!buffer) { onIssue(`clip failed to load: ${speechClipErrors[clipId]}`); finish(); return; }
+      if (!buffer) { onIssue(`clip ${variantId} failed to load: ${speechClipErrors[variantId]}`); finish(); return; }
       if (audioContext.state !== 'running') onIssue(`audio context still ${audioContext.state}; clip likely silent`);
       setTimeout(finish, (buffer.duration + 1.5) * 1000);
       stopCurrentSpeech(); // a lingering earlier clip must never overlap this one
@@ -307,6 +322,8 @@ async function runSession() {
   }
   await renderer.xr.setSession(session);
   session.addEventListener('select', onSelect);
+  updateInputMode(session);
+  session.addEventListener('inputsourceschange', () => updateInputMode(session));
 
   const record = {
     app: 'vision-home',
@@ -448,7 +465,7 @@ async function runSession() {
     // routing; give it a moment to settle (and get the context back) before the first prompt.
     audioContext.resume().catch(() => {});
     await sleep(1500);
-    logEvent(`audio context at routine start: ${audioContext.state}`);
+    logEvent(`audio context at routine start: ${audioContext.state}, input mode: ${inputMode}`);
     await say('welcome');
     await convergenceNearPoint();
     await say('next_exercise');

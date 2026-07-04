@@ -31,7 +31,10 @@ Static site, **no build step, no framework, no dependencies to install**:
   speak nor fire `onend`, which silently stalled an entire on-device session at its first prompt.
   Voice = pre-generated clips: `say -o /tmp/x.aiff "phrase"` then
   `afconvert -f m4af -d aac -b 64000 /tmp/x.aiff audio/x.m4a`, register the id in `speechClips`
-  in `main.js`. Clips must play through the shared `AudioContext` (Web Audio), never
+  in `main.js`. A prompt that names the confirm action needs `<id>_trigger` and `<id>_pinch`
+  variants ("squeeze the trigger" / "pinch") — `speak()` picks by the session's live input
+  sources (controller gamepad vs hands / Vision Pro), never by user agent; call sites use the
+  base id. Clips must play through the shared `AudioContext` (Web Audio), never
   `HTMLAudioElement` — element `.play()` is gesture-gated per call and silently skipped clips
   mid-session in the immersive session (e.g. `jumps_intro` never played); the context is
   unlocked once inside the Start click. Playback must stay stall-proof (the `speak()` promise
