@@ -50,6 +50,38 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
 
 renderRecordsTable();
 
+// ---------- settings (persisted in localStorage, prefilled on the next visit; the prism values
+// are the patient's prescription as entered on professional instruction - like everything else
+// here they never leave the device) ----------
+
+const SETTINGS_KEY = 'visionHomeSettings';
+const settingsFields = ['patientName', 'stringLength', 'prismEnabled', 'prismVertical', 'prismHorizontal'];
+
+function loadSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY)) ?? {}; } catch { }
+  for (const id of settingsFields) {
+    const el = document.getElementById(id);
+    if (!(id in saved)) continue;
+    if (el.type === 'checkbox') el.checked = saved[id];
+    else el.value = saved[id];
+  }
+}
+
+function saveSettings() {
+  const out = {};
+  for (const id of settingsFields) {
+    const el = document.getElementById(id);
+    out[id] = el.type === 'checkbox' ? el.checked : el.value;
+  }
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(out));
+}
+
+for (const id of settingsFields) {
+  document.getElementById(id).addEventListener('change', saveSettings);
+}
+loadSettings();
+
 // ---------- speech (browser TTS - fully offline on Quest browser) --------------------------
 
 function speak(text) {
@@ -97,6 +129,11 @@ function onSelect() {
 async function runSession() {
   const patientName = document.getElementById('patientName').value.trim() || 'patient';
   const stringLength = parseFloat(document.getElementById('stringLength').value);
+  const prism = {
+    enabled: document.getElementById('prismEnabled').checked,
+    verticalDiopters: parseFloat(document.getElementById('prismVertical').value) || 0,
+    horizontalDiopters: parseFloat(document.getElementById('prismHorizontal').value) || 0,
+  };
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.xr.enabled = true;
@@ -146,7 +183,31 @@ async function runSession() {
   function setBeadZ(index, z) { beads[index].position.z = -z; }
   function beadZ(index) { return -beads[index].position.z; }
 
-  // --- render loop: advances any scripted bead motion.
+  // --- prism simulation: the same optics as the native app's screen-space shift, expressed as
+  // a per-eye translation of the projection matrix. 1 prism diopter = a 1% tangent deviation;
+  // NDC x for a direction with tangent t is t * m00, so the image shift in NDC is
+  // (diopters/100) * m00 (and m11 vertically) - no FOV assumptions, read from the projection the
+  // XR system provided this frame. Sign conventions match the native PrismController exactly:
+  // right eye base-down + base-out => image shifts up (+y) and toward the nose (-x); left eye
+  // mirrored. Reapplied every frame because WebXR refreshes the matrices every frame.
+  const shiftMatrix = new THREE.Matrix4();
+  function applyPrism() {
+    if (!prism.enabled) return;
+    const xrCamera = renderer.xr.getCamera();
+    if (!xrCamera.isArrayCamera || xrCamera.cameras.length !== 2) return;
+    xrCamera.cameras.forEach((eyeCamera, i) => {
+      const isRight = i === 1;
+      const m00 = eyeCamera.projectionMatrix.elements[0];
+      const m11 = eyeCamera.projectionMatrix.elements[5];
+      const x = (prism.horizontalDiopters / 100) * m00 * (isRight ? -1 : 1);
+      const y = (prism.verticalDiopters / 100) * m11 * (isRight ? 1 : -1);
+      shiftMatrix.makeTranslation(x, y, 0);
+      eyeCamera.projectionMatrix.premultiply(shiftMatrix);
+      eyeCamera.projectionMatrixInverse.copy(eyeCamera.projectionMatrix).invert();
+    });
+  }
+
+  // --- render loop: advances any scripted bead motion, applies the prism shift.
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
     const dt = clock.getDelta();
@@ -155,6 +216,7 @@ async function runSession() {
       const z = THREE.MathUtils.clamp(beadZ(m.bead) + m.velocity * dt, m.minZ, m.maxZ);
       setBeadZ(m.bead, z);
     }
+    applyPrism();
     renderer.render(scene, camera);
   });
 
@@ -173,6 +235,7 @@ async function runSession() {
     app: 'vision-home',
     patientName,
     stringLengthMeters: stringLength,
+    prescription: prism,
     startedUtc: new Date().toISOString(),
     durationSeconds: 0,
     results: [],
