@@ -203,6 +203,51 @@ function onSelect() {
   }
 }
 
+// ---------- Brock-string visuals -------------------------------------------------------------
+
+// A real bead is a sphere with a cylindrical hole drilled through it. Lathe a profile that
+// runs down the hole wall and back over the sphere surface, then rotate the geometry so the
+// hole axis lies along Z - the string's axis - and the cord visibly threads every bead.
+function makeBeadGeometry(radius, holeRadius) {
+  const rimAngle = Math.asin(holeRadius / radius); // polar angle where the hole meets the sphere
+  const rimY = Math.cos(rimAngle) * radius;
+  const points = [new THREE.Vector2(holeRadius, rimY), new THREE.Vector2(holeRadius, -rimY)];
+  const arcSteps = 24;
+  for (let i = 0; i <= arcSteps; i++) {
+    const phi = (Math.PI - rimAngle) - (i / arcSteps) * (Math.PI - 2 * rimAngle);
+    points.push(new THREE.Vector2(Math.sin(phi) * radius, Math.cos(phi) * radius));
+  }
+  const geometry = new THREE.LatheGeometry(points, 32);
+  geometry.rotateX(Math.PI / 2);
+  return geometry;
+}
+
+// Twisted-twine texture for the cord: two seamless 45-degree stripe sets (shadow + highlight)
+// that tile into a helix when repeated along a thin cylinder.
+function makeStringTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ddd5c4';
+  ctx.fillRect(0, 0, 32, 32);
+  for (const stripe of [{ color: '#a1977f', width: 8, shift: 0 }, { color: '#f2ecdd', width: 4, shift: 16 }]) {
+    ctx.strokeStyle = stripe.color;
+    ctx.lineWidth = stripe.width;
+    for (const off of [-32, 0, 32]) { // slope -1, period 32: wraps seamlessly in both axes
+      ctx.beginPath();
+      ctx.moveTo(off + stripe.shift - 16, 48);
+      ctx.lineTo(off + stripe.shift + 48, -16);
+      ctx.stroke();
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 async function runSession() {
   // Unlock audio while still inside the click gesture (before any await) - autoplay policy
   // ties AudioContext.resume() to user activation on Quest Browser and Vision Pro Safari.
@@ -224,6 +269,11 @@ async function runSession() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d12);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2));
+  // Directional key light so the cord's twist and the beads' hole rims actually shade -
+  // hemisphere light alone renders them flat.
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  keyLight.position.set(0.5, 1, 0.6);
+  scene.add(keyLight);
 
   const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
   scene.add(camera);
@@ -245,17 +295,25 @@ async function runSession() {
     { name: 'yellow', color: 0xf5c518, z: 0.45 },
     { name: 'green', color: 0x2fa84f, z: stringLength - 0.05 },
   ];
+  const beadGeometry = makeBeadGeometry(0.011, 0.003); // 22mm bead, 6mm hole
   const beads = beadDefs.map(def => {
     const bead = new THREE.Mesh(
-      new THREE.SphereGeometry(0.011, 24, 16),
-      new THREE.MeshStandardMaterial({ color: def.color }));
+      beadGeometry,
+      new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.35, side: THREE.DoubleSide }));
     bead.position.z = -def.z;
     stringGroup.add(bead);
     return bead;
   });
-  const cord = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -stringLength)]),
-    new THREE.LineBasicMaterial({ color: 0xffffff }));
+
+  // The cord: a 2mm twine cylinder threading the bead holes, twist pitch ~5mm.
+  const stringTexture = makeStringTexture();
+  stringTexture.anisotropy = renderer.capabilities.getMaxAnisotropy(); // viewed nearly edge-on
+  stringTexture.repeat.set(2, Math.round(stringLength / 0.005));
+  const cord = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.001, 0.001, stringLength, 10, 1, true),
+    new THREE.MeshStandardMaterial({ map: stringTexture, roughness: 0.85 }));
+  cord.geometry.rotateX(Math.PI / 2); // cylinder height axis Y -> Z, along the string
+  cord.position.z = -stringLength / 2;
   stringGroup.add(cord);
 
   // Small magenta dot above the string while prism simulation is active - unmissable ground
