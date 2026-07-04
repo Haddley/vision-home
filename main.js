@@ -294,12 +294,13 @@ async function runSession() {
     return bead;
   });
 
-  // The cord: two 2.5mm strands wound around each other - 5mm overall, ~12mm pitch, threading
-  // the beads' 6mm bore snugly.
+  // The cord: two 3mm strands on a 1mm twist radius - 5mm overall, ~12mm pitch, threading the
+  // beads' 6mm bore snugly. Strand radius deliberately exceeds the twist radius so the strands
+  // interpenetrate like squashed real rope; merely tangent strands show daylight between them.
   const cordMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.55 });
   for (let strand = 0; strand < 2; strand++) {
     stringGroup.add(new THREE.Mesh(
-      makeStrandGeometry(stringLength, 0.00125, 0.00125, 0.012, strand, 2), cordMaterial));
+      makeStrandGeometry(stringLength, 0.0015, 0.001, 0.012, strand, 2), cordMaterial));
   }
 
   // Small magenta dot above the string while prism simulation is active - unmissable ground
