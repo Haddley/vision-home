@@ -29,9 +29,11 @@ Static site, **no build step, no framework, no dependencies to install**:
 
 - **Never use `speechSynthesis`.** Meta's Quest Browser doesn't implement it — utterances neither
   speak nor fire `onend`, which silently stalled an entire on-device session at its first prompt.
-  Voice = pre-generated clips: `say -o /tmp/x.aiff "phrase"` then
-  `afconvert -f m4af -d aac -b 64000 /tmp/x.aiff audio/x.m4a`, register the id in `speechClips`
-  in `main.js`. A prompt that names the confirm action needs `<id>_trigger` and `<id>_pinch`
+  Voice = pre-generated clips. Every clip's text lives in `audio/generate.sh` — the single
+  source of truth and the build pipeline (`./audio/generate.sh [ids…]`, macOS `say` +
+  `afconvert`). To add or change a prompt: edit the text there, run it, and register the id in
+  `speechClips` in `main.js`; never generate a clip ad hoc without recording its text in that
+  script. A prompt that names the confirm action needs `<id>_trigger` and `<id>_pinch`
   variants ("squeeze the trigger" / "pinch") — `speak()` picks by the session's live input
   sources (controller gamepad vs hands / Vision Pro), never by user agent; call sites use the
   base id. Clips must play through the shared `AudioContext` (Web Audio), never
